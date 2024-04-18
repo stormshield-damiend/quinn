@@ -11,7 +11,7 @@ use clap::Parser;
 use quinn::TokioRuntime;
 use tracing::{debug, error, info, warn};
 
-use perf::bind_socket;
+use perf::{bind_socket, noprotection::NoProtectionServerConfig};
 
 #[derive(Parser)]
 #[clap(name = "server datagram")]
@@ -19,11 +19,11 @@ struct Opt {
     /// Address to listen on
     #[clap(long = "listen", default_value = "[::]:4433")]
     listen: SocketAddr,
-    /// TLS private key in PEM format
-    #[clap(parse(from_os_str), short = 'k', long = "key", requires = "cert")]
+    /// TLS private key in DER format
+    #[clap(short = 'k', long = "key", requires = "cert")]
     key: Option<PathBuf>,
     /// TLS certificate in PEM format
-    #[clap(parse(from_os_str), short = 'c', long = "cert", requires = "key")]
+    #[clap(short = 'c', long = "cert", requires = "key")]
     cert: Option<PathBuf>,
     /// Send buffer size in bytes
     #[clap(long, default_value = "2097152")]
@@ -39,7 +39,10 @@ struct Opt {
     keylog: bool,
     /// UDP payload size that the network must be capable of carrying
     #[clap(long, default_value = "1200")]
-    initial_max_udp_payload_size: u16,
+    initial_mtu: u16,
+    /// Disable packet encryption/decryption (for debugging purpose)
+    #[clap(long = "no-protection")]
+    no_protection: bool,
 }
 
 #[tokio::main(flavor = "current_thread")]
@@ -90,12 +93,16 @@ async fn run(opt: Opt) -> Result<()> {
     }
 
     let mut transport = quinn::TransportConfig::default();
-    transport.initial_max_udp_payload_size(opt.initial_max_udp_payload_size);
+    transport.initial_mtu(opt.initial_mtu);
     // FIXME add command line option
     transport.datagram_receive_buffer_size(Some(16 * 1024 * 1024));
     transport.datagram_send_buffer_size(16 * 1024 * 1024);
 
-    let mut server_config = quinn::ServerConfig::with_crypto(Arc::new(crypto));
+    let mut server_config = if opt.no_protection {
+        quinn::ServerConfig::with_crypto(Arc::new(NoProtectionServerConfig::new(Arc::new(crypto))))
+    } else {
+        quinn::ServerConfig::with_crypto(Arc::new(crypto))
+    };
     server_config.transport_config(Arc::new(transport));
 
     let socket = bind_socket(opt.listen, opt.send_buffer_size, opt.recv_buffer_size)?;
@@ -104,7 +111,7 @@ async fn run(opt: Opt) -> Result<()> {
         Default::default(),
         Some(server_config),
         socket,
-        TokioRuntime,
+        Arc::new(TokioRuntime),
     )
     .context("creating endpoint")?;
 
@@ -124,7 +131,7 @@ async fn run(opt: Opt) -> Result<()> {
     Ok(())
 }
 
-async fn handle(handshake: quinn::Connecting, opt: Arc<Opt>) -> Result<()> {
+async fn handle(handshake: quinn::Incoming, opt: Arc<Opt>) -> Result<()> {
     let connection = handshake.await.context("handshake failed")?;
     debug!("{} connected", connection.remote_address());
     tokio::try_join!(drive_dgram(connection.clone()), conn_stats(connection, opt))?;

@@ -10,8 +10,8 @@ use clap::Parser;
 use quinn::TokioRuntime;
 use tracing::{debug, error, info, warn};
 
-use perf::bind_socket;
 use perf::stats::{OpenStreamStats, Stats};
+use perf::{bind_socket, noprotection::NoProtectionClientConfig};
 #[cfg(feature = "json-output")]
 use std::path::PathBuf;
 
@@ -55,7 +55,10 @@ struct Opt {
     keylog: bool,
     /// UDP payload size that the network must be capable of carrying
     #[clap(long, default_value = "1200")]
-    initial_max_udp_payload_size: u16,
+    initial_mtu: u16,
+    /// Disable packet encryption/decryption (for debugging purpose)
+    #[clap(long = "no-protection")]
+    no_protection: bool,
 }
 
 #[tokio::main(flavor = "current_thread")]
@@ -100,7 +103,7 @@ async fn run(opt: Opt) -> Result<()> {
 
     let socket = bind_socket(bind_addr, opt.send_buffer_size, opt.recv_buffer_size)?;
 
-    let endpoint = quinn::Endpoint::new(Default::default(), None, socket, TokioRuntime)?;
+    let endpoint = quinn::Endpoint::new(Default::default(), None, socket, Arc::new(TokioRuntime))?;
 
     let mut crypto = rustls::ClientConfig::builder()
         .with_cipher_suites(perf::PERF_CIPHER_SUITES)
@@ -116,12 +119,16 @@ async fn run(opt: Opt) -> Result<()> {
     }
 
     let mut transport = quinn::TransportConfig::default();
-    transport.initial_max_udp_payload_size(opt.initial_max_udp_payload_size);
+    transport.initial_mtu(opt.initial_mtu);
     // FIXME add command line option
     transport.datagram_receive_buffer_size(Some(16 * 1024 * 1024));
     transport.datagram_send_buffer_size(16 * 1024 * 1024);
 
-    let mut cfg = quinn::ClientConfig::new(Arc::new(crypto));
+    let mut cfg = if opt.no_protection {
+        quinn::ClientConfig::new(Arc::new(NoProtectionClientConfig::new(Arc::new(crypto))))
+    } else {
+        quinn::ClientConfig::new(Arc::new(crypto))
+    };
     cfg.transport_config(Arc::new(transport));
 
     let stream_stats = OpenStreamStats::default();
@@ -193,6 +200,8 @@ async fn drive_dgram(
         if let Err(e) = upload_dgram(connection2, send, recv, upload, stream_stats).await {
             error!("request failed: {:#}", e);
         }
+
+        // break Ok(());
     }
 }
 
@@ -218,7 +227,8 @@ async fn upload_dgram(
         // debug!("sending datagram, remains {}", bytes);
         let chunk_len = bytes.min(DATA.len() as u64);
         connection
-            .send_datagram(Bytes::from_static(&DATA[..chunk_len as usize]))
+            .send_datagram_wait(Bytes::from_static(&DATA[..chunk_len as usize]))
+            .await
             .context("sending datagram")?;
         send_stream_stats.on_bytes(chunk_len as usize);
         bytes -= chunk_len;
