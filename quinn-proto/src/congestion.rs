@@ -6,11 +6,11 @@ use std::any::Any;
 use std::sync::Arc;
 
 mod bbr;
-mod cubic;
+mod cubic_old; // https://datatracker.ietf.org/doc/html/rfc8312
 mod new_reno;
 
 pub use bbr::{Bbr, BbrConfig};
-pub use cubic::{Cubic, CubicConfig};
+pub use cubic_old::{CubicOld, CubicOldConfig};
 pub use new_reno::{NewReno, NewRenoConfig};
 
 /// Common interface for different congestion controllers

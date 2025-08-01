@@ -18,7 +18,7 @@ const C: f64 = 0.4;
 /// We need to keep those variables across the connection.
 /// k, w_max are described in the RFC.
 #[derive(Debug, Default, Clone)]
-pub(super) struct State {
+struct State {
     /// Time period that the cubic function takes to increase the window size to W_max.
     k: f64,
 
@@ -73,17 +73,17 @@ impl State {
 
 /// The RFC8312 congestion controller, as widely used for TCP
 #[derive(Debug, Clone)]
-pub struct Cubic {
-    config: Arc<CubicConfig>,
+pub struct CubicOld {
+    config: Arc<CubicOldConfig>,
     current_mtu: u64,
     state: State,
     /// Copy of the controller state to restore when a spurious congestion event is detected.
     pre_congestion_state: Option<State>,
 }
 
-impl Cubic {
+impl CubicOld {
     /// Construct a state using the given `config` and current time `now`
-    pub fn new(config: Arc<CubicConfig>, _now: Instant, current_mtu: u16) -> Self {
+    pub fn new(config: Arc<CubicOldConfig>, _now: Instant, current_mtu: u16) -> Self {
         Self {
             state: State {
                 window: config.initial_window,
@@ -101,7 +101,7 @@ impl Cubic {
     }
 }
 
-impl Controller for Cubic {
+impl Controller for CubicOld {
     fn on_ack(
         &mut self,
         now: Instant,
@@ -270,11 +270,11 @@ impl Controller for Cubic {
 
 /// Configuration for the `Cubic` congestion controller
 #[derive(Debug, Clone)]
-pub struct CubicConfig {
+pub struct CubicOldConfig {
     initial_window: u64,
 }
 
-impl CubicConfig {
+impl CubicOldConfig {
     /// Default limit on the amount of outstanding data in bytes.
     ///
     /// Recommended value: `min(10 * max_datagram_size, max(2 * max_datagram_size, 14720))`
@@ -284,7 +284,7 @@ impl CubicConfig {
     }
 }
 
-impl Default for CubicConfig {
+impl Default for CubicOldConfig {
     fn default() -> Self {
         Self {
             initial_window: 14720.clamp(2 * BASE_DATAGRAM_SIZE, 10 * BASE_DATAGRAM_SIZE),
@@ -292,8 +292,8 @@ impl Default for CubicConfig {
     }
 }
 
-impl ControllerFactory for CubicConfig {
+impl ControllerFactory for CubicOldConfig {
     fn build(self: Arc<Self>, now: Instant, current_mtu: u16) -> Box<dyn Controller> {
-        Box::new(Cubic::new(self, now, current_mtu))
+        Box::new(CubicOld::new(self, now, current_mtu))
     }
 }

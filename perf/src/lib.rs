@@ -17,7 +17,7 @@ pub mod noprotection;
 
 #[derive(Clone, Copy, ValueEnum)]
 pub enum CongestionAlgorithm {
-    Cubic,
+    CubicOld, // https://datatracker.ietf.org/doc/html/rfc8312
     Bbr,
     NewReno,
 }
@@ -25,7 +25,7 @@ pub enum CongestionAlgorithm {
 impl CongestionAlgorithm {
     pub fn build(self) -> Arc<dyn ControllerFactory + Send + Sync + 'static> {
         match self {
-            CongestionAlgorithm::Cubic => Arc::new(congestion::CubicConfig::default()),
+            CongestionAlgorithm::CubicOld => Arc::new(congestion::CubicOldConfig::default()),
             CongestionAlgorithm::Bbr => Arc::new(congestion::BbrConfig::default()),
             CongestionAlgorithm::NewReno => Arc::new(congestion::NewRenoConfig::default()),
         }
